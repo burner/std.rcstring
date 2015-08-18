@@ -69,10 +69,36 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		this.assign(input);
 	}
 
+	this(typeof(this) n) {
+		this.assign(n);
+	}
+
+	this(this) {
+		if(this.large !is null) {
+			Handler.incrementRefCnt(this.large);
+		}
+	}
+
 	~this() {
 		if(this.large !is null) {
 			Handler.decrementRefCnt(this.large);
 		}
+	}
+
+	private void assign(typeof(this) n) @safe {
+		if(this.large !is null) {
+			Handler.decrementRefCnt(this.large);
+		}
+
+		if(n.large !is null) {
+			this.large = n.large;
+			Handler.incrementRefCnt(this.large);
+		} else {
+			this.small = n.small;
+		}
+
+		this.offset = n.offset;
+		this.len = n.len;
 	}
 
 	private void assign(immutable(T)[] input) @trusted {
@@ -155,19 +181,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	void opAssign(typeof(this) n) {
-		if(this.large !is null) {
-			Handler.decrementRefCnt(this.large);
-		}
-
-		if(n.large !is null) {
-			this.large = n.large;
-			Handler.incrementRefCnt(this.large);
-		} else {
-			this.small = n.small;
-		}
-
-		this.offset = n.offset;
-		this.len = n.len;
+		this.assign(n);
 	}
 
 	T[SmallSize] small;
@@ -181,15 +195,24 @@ alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char);
 
 unittest {
 	import std.conv : to;
+	import std.stdio : writeln;
 
-	auto strs = ["HelloSuperUltraLongStringDOubleSizeBigTime", "Hello"];
+	auto strs = ["ABC", "HellWorld",
+		"HellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorld", 
+		"ABCD", "Hello", "HellWorldHellWorld"
+	];
+
 	foreach(str; strs) {
+		//debug writeln(str);
 		auto s = String(str);
 		assert(!s.empty);
 		assert(s.front == str.front, to!string(s.front));
 		assert(s.back == str.back);
 		assert(s[0] == str.front);
 		assert(s.length == str.length);
+		for(size_t i = 0; i < str.length; ++i) {
+			assert(str[i] == s[i]);
+		}
 
 		String t;
 		assert(t.empty);
@@ -207,5 +230,12 @@ unittest {
 		assert(s.back == str.back);
 		assert(s[0] == str.front);
 		assert(s.length == str.length);
+
+		auto r = String(s);
+		assert(!r.empty);
+		assert(r.front == str.front, to!string(t.front));
+		assert(r.back == str.back);
+		assert(r[0] == str.front);
+		assert(r.length == str.length);
 	}
 }
