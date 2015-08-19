@@ -1,2 +1,2 @@
 all:
-	dmd -unittest -debug -main -w -g -cov rcstring.d
+	dmd -unittest -debug -main -profile=gc -w -g -cov rcstring.d

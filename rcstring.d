@@ -30,7 +30,7 @@ struct StringPayloadSingleThreadHandler(T) {
 
 		assert(s != 0);
 		if(s >= pl.length) {
-			pl.ptr = cast(T*)GC.realloc(pl.ptr, s);
+			pl.ptr = cast(T*)GC.realloc(pl.ptr, s * T.sizeof);
 			pl.length = s;
 		}
 	}
@@ -50,6 +50,70 @@ struct StringPayloadSingleThreadHandler(T) {
 	static void decrementRefCnt(StringPayload!T* pl) {
 		if(pl !is null) {
 			--(pl.refCnt);
+			if(pl.refCnt == 0) {
+				deallocate(pl);
+			}
+		}
+	}
+}
+
+struct StringPayloadMultiThreadHandler(T) {
+	import core.sync.mutex : Mutex;
+
+	alias Char = T;
+    ubyte[__traits(classInstanceSize, Mutex)] mutex;
+
+	static StringPayload!T* make() @trusted {
+		auto mu = emplace!Mutex(this.mutex);
+		StringPayload!T* pl;
+		synchronized(mutex) {
+			pl = cast(StringPayload!T*)GC.realloc(pl, typeof(*pl).sizeof);
+			pl.ptr = null;
+			pl.length = 0;
+			pl.refCnt = 1;
+		}
+
+		return pl;
+	}
+
+	static void allocate(StringPayload!T* pl, in size_t s) @trusted {
+		import std.range : ElementEncodingType;
+		import std.traits : Unqual;
+
+		assert(s != 0);
+		auto mu = cast(Mutex)this.mutex;
+		synchronized(mutex) {
+			if(s >= pl.length) {
+				pl.ptr = cast(T*)GC.realloc(pl.ptr, s * T.sizeof);
+				pl.length = s;
+			}
+		}
+	}
+
+	static void deallocate(StringPayload!T* pl) @trusted {
+		GC.realloc(pl.ptr, 0);
+		pl.length = 0;
+		GC.realloc(pl, 0);
+	}
+
+	static void incrementRefCnt(StringPayload!T* pl) {
+		auto mu = cast(Mutex)this.mutex;
+		synchronized(mutex) {
+			if(pl !is null) {
+				++(pl.refCnt);
+			}
+		}
+	}
+
+	static void decrementRefCnt(StringPayload!T* pl) {
+		auto mu = cast(Mutex)this.mutex;
+		synchronized(mutex) {
+			if(pl !is null) {
+				--(pl.refCnt);
+			}
+		}
+
+		if(pl !is null) {
 			if(pl.refCnt == 0) {
 				deallocate(pl);
 			}
@@ -122,7 +186,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	private bool isSmall() const nothrow {
-		return this.len < SmallSize;
+		return this.large is null;
 	}
 
 	// properties
@@ -133,6 +197,23 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	@property size_t length() const nothrow {
 		return cast(size_t)(this.len - this.offset);
+	}
+
+	// dup
+	@property typeof(this) idup() @trusted nothrow {
+		if(this.isSmall()) {
+			return this;
+		} else {
+			typeof(this) ret;
+			ret.large = ret.handler.make();
+			ret.handler.allocate(ret.large, this.large.length);
+			ret.large.ptr[0 .. this.len - this.offset] =
+				this.large.ptr[this.offset .. this.len];
+			ret.offset = 0;
+			ret.len = this.len - this.offset;
+
+			return ret;
+		}
 	}
 
 	// access
@@ -162,9 +243,29 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			this.largePtr(this.offset, this.len)[idx];
 	}
 
+	typeof(this) opSlice() {
+		return this;
+	}
+
+	typeof(this) opSlice(in size_t low, in size_t high) @trusted {
+		assert(low <= high);
+		assert(high < this.length);
+
+		if(this.isSmall()) {
+			return typeof(this)(
+				cast(immutable(T)[])this.small[this.offset + low ..  this.offset + high]
+			);
+		} else {
+			auto ret = typeof(this)(this);
+			ret.offset += low;
+			ret.len = this.offset + high;
+			return ret;
+		}
+	}
+
 	// assign
 
-	void opAssign(inout(char)[] n) {
+	void opAssign(inout(T)[] n) {
 		if(this.isSmall() && n.length < SmallSize) {
 			this.small[0 .. n.length] = n;
 		} else {
@@ -209,6 +310,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	T[SmallSize] small;
 	StringPayload!T* large;
+	Handler handler;
 
 	ptrdiff_t offset;
 	ptrdiff_t len;
@@ -216,29 +318,58 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char);
 
-unittest {
+void testFunc(T,size_t Buf)() {
 	import std.conv : to;
 	import std.stdio : writeln;
 	import std.array : empty, popBack, popFront;
+	import std.format : format;
 
-	auto strs = ["ABC", "HellWorld",
+	auto strs = ["ABC", "HellWorld", "", "Foobar", 
 		"HellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorld", 
-		"ABCD", "Hello", "HellWorldHellWorld", "ölleä"
+		"ABCD", "Hello", "HellWorldHellWorld", "ölleä",
+		"hello\U00010143\u0100\U00010143", "£$€¥", "öhelloöö"
 	];
 
-	foreach(str; strs) {
+	alias TString = 
+		StringImpl!(T, StringPayloadSingleThreadHandler!T, Buf);
+
+	foreach(strL; strs) {
+		auto str = to!(immutable(T)[])(strL);
 		//debug writeln(str);
-		auto s = String(str);
-		assert(!s.empty);
+		auto s = TString(str);
+		assert(s.length == str.length);
+		assert(s.empty == str.empty);
+
+		if(s.empty) { // if str is empty we do not need to test access
+			continue; //methods
+		}
+
 		assert(s.front == str.front, to!string(s.front));
 		assert(s.back == str.back);
 		assert(s[0] == str[0], to!string(s[0]) ~ " " ~ to!string(str.front));
-		assert(s.length == str.length);
 		for(size_t i = 0; i < str.length; ++i) {
 			assert(str[i] == s[i]);
 		}
 
-		String t;
+		for(size_t it = 0; it < str.length; ++it) {
+			for(size_t jt = it; jt < str.length; ++jt) {
+				auto ss = s[it .. jt];
+				auto strc = str[it .. jt];
+
+				assert(ss.length == strc.length);
+				assert(ss.empty == strc.empty);
+
+				for(size_t k = 0; k < ss.length; ++k) {
+					assert(ss[k] == strc[k], 
+						format("it %s jt %s k %s ss[k] %s strc[k] %s str %s",
+							it, jt, k, ss[k], strc[k], str
+						)
+					);
+				}
+			}
+		}
+
+		TString t;
 		assert(t.empty);
 
 		t = str;
@@ -248,6 +379,17 @@ unittest {
 		assert(t[0] == str[0]);
 		assert(t.length == str.length);
 
+		auto tdup = t.idup;
+		assert(!tdup.empty);
+		assert(tdup.front == str.front, to!string(tdup.front));
+		assert(tdup.back == str.back);
+		assert(tdup[0] == str[0]);
+		assert(tdup.length == str.length);
+		
+		if(tdup.large !is null) {
+			assert(tdup.large.refCnt == 1);
+		}
+
 		s = t;
 		assert(!s.empty);
 		assert(s.front == str.front, to!string(t.front));
@@ -255,12 +397,19 @@ unittest {
 		assert(s[0] == str[0]);
 		assert(s.length == str.length);
 
-		auto r = String(s);
+		auto r = TString(s);
 		assert(!r.empty);
 		assert(r.front == str.front, to!string(t.front));
 		assert(r.back == str.back);
 		assert(r[0] == str[0]);
 		assert(r.length == str.length);
+
+		auto g = r[];
+		assert(!g.empty);
+		assert(g.front == str.front, to!string(t.front));
+		assert(g.back == str.back);
+		assert(g[0] == str[0]);
+		assert(g.length == str.length);
 
 		auto strC = str;
 		auto strC2 = str;
@@ -281,6 +430,10 @@ unittest {
 		while(!strC.empty && !s.empty) {
 			assert(strC.front == s.front);
 			assert(strC.back == s.back);
+			assert(strC.length == s.length);
+			for(size_t i = 0; i < strC.length; ++i) {
+				assert(strC[i] == s[i]);
+			}
 
 			strC.popFront();
 			s.popFront();
@@ -294,6 +447,10 @@ unittest {
 		while(!strC2.empty && !t.empty) {
 			assert(strC2.front == t.front);
 			assert(strC2.back == t.back);
+			assert(strC2.length == t.length);
+			for(size_t i = 0; i < strC2.length; ++i) {
+				assert(strC2[i] == t[i]);
+			}
 
 			strC2.popFront();
 			t.popFront();
@@ -301,5 +458,15 @@ unittest {
 
 		assert(strC2.empty);
 		assert(t.empty);
+	}
+}
+
+@safe pure unittest {
+	import std.traits : TypeTuple;
+
+	foreach(Buf; TypeTuple!(1,2,4,8,9,12,16,20,21)) {
+		testFunc!(char,Buf)();
+		testFunc!(wchar,Buf)();
+		testFunc!(dchar,Buf)();
 	}
 }
