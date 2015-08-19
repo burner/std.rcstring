@@ -1,6 +1,9 @@
+module rcstring;
+
 import core.memory;
 import std.conv : emplace;
 import std.array : back, front;
+import std.traits : Unqual;
 
 
 pure @safe:
@@ -199,6 +202,26 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		return cast(size_t)(this.len - this.offset);
 	}
 
+	// compare
+
+	bool opEquals(S)(S other) const 
+		if(is(S == Unqual!(typeof(this))) ||
+			is(S == immutable(T)[])
+		)
+	{
+		if(this.length == other.length) {
+			for(size_t i = 0; i < this.length; ++i) {
+				if(this[i] != other[i]) {
+					return false;
+				}
+			}
+
+			return true;
+		} else {
+			return false;
+		}
+	}
+
 	// dup
 	@property typeof(this) idup() @trusted nothrow {
 		if(this.isSmall()) {
@@ -316,7 +339,9 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	ptrdiff_t len;
 }
 
-alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char);
+alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char, 12);
+alias WString = StringImpl!(wchar, StringPayloadSingleThreadHandler!wchar, 6);
+alias DString = StringImpl!(dchar, StringPayloadSingleThreadHandler!dchar, 3);
 
 void testFunc(T,size_t Buf)() {
 	import std.conv : to;
@@ -339,6 +364,7 @@ void testFunc(T,size_t Buf)() {
 		auto s = TString(str);
 		assert(s.length == str.length);
 		assert(s.empty == str.empty);
+		assert(s == str);
 
 		if(s.empty) { // if str is empty we do not need to test access
 			continue; //methods
@@ -373,6 +399,7 @@ void testFunc(T,size_t Buf)() {
 		assert(t.empty);
 
 		t = str;
+		assert(s == t);
 		assert(!t.empty);
 		assert(t.front == str.front, to!string(t.front));
 		assert(t.back == str.back);
@@ -419,6 +446,7 @@ void testFunc(T,size_t Buf)() {
 		r.popFront();
 		str.popFront();
 		assert(str.front == r.front, to!string(r.front));
+		assert(s != r);
 
 		r.popBack();
 		str.popBack();
@@ -464,7 +492,7 @@ void testFunc(T,size_t Buf)() {
 @safe pure unittest {
 	import std.traits : TypeTuple;
 
-	foreach(Buf; TypeTuple!(1,2,4,8,9,12,16,20,21)) {
+	foreach(Buf; TypeTuple!(1,2,3,4,8,9,12,16,20,21)) {
 		testFunc!(char,Buf)();
 		testFunc!(wchar,Buf)();
 		testFunc!(dchar,Buf)();
