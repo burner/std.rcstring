@@ -141,7 +141,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		assert(!this.empty);
 
 		return this.isSmall() ? 
-			this.small.front : 
+			this.small[this.offset .. this.len].front : 
 			this.largePtr(this.offset, this.len).front;
 	}
 
@@ -149,7 +149,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		assert(!this.empty);
 
 		return this.isSmall() ? 
-			this.small[0 .. this.len].back : 
+			this.small[this.offset .. this.len].back : 
 			this.largePtr(this.offset, this.len).back;
 	}
 
@@ -158,7 +158,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		assert(idx < this.len - this.offset);
 
 		return this.isSmall() ? 
-			this.small[idx] : 
+			this.small[this.offset .. this.len][idx] : 
 			this.largePtr(this.offset, this.len)[idx];
 	}
 
@@ -184,6 +184,29 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		this.assign(n);
 	}
 
+	// modify
+
+	void popFront() {
+		import std.utf : stride;
+
+		const auto l = this.isSmall() ? 
+			this.small[this.offset .. this.len].stride() :
+			this.largePtr(this.offset, this.len).stride();
+
+		this.offset += l;
+	}
+
+	void popBack() {
+		import std.utf : strideBack;
+
+		const auto l = this.isSmall() ? 
+			this.small[this.offset .. this.len].strideBack() :
+			this.largePtr(this.offset, this.len).strideBack();
+
+		this.len -= l;
+
+	}
+
 	T[SmallSize] small;
 	StringPayload!T* large;
 
@@ -196,10 +219,11 @@ alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char);
 unittest {
 	import std.conv : to;
 	import std.stdio : writeln;
+	import std.array : empty, popBack, popFront;
 
 	auto strs = ["ABC", "HellWorld",
 		"HellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorld", 
-		"ABCD", "Hello", "HellWorldHellWorld"
+		"ABCD", "Hello", "HellWorldHellWorld", "ölleä"
 	];
 
 	foreach(str; strs) {
@@ -208,7 +232,7 @@ unittest {
 		assert(!s.empty);
 		assert(s.front == str.front, to!string(s.front));
 		assert(s.back == str.back);
-		assert(s[0] == str.front);
+		assert(s[0] == str[0], to!string(s[0]) ~ " " ~ to!string(str.front));
 		assert(s.length == str.length);
 		for(size_t i = 0; i < str.length; ++i) {
 			assert(str[i] == s[i]);
@@ -221,21 +245,61 @@ unittest {
 		assert(!t.empty);
 		assert(t.front == str.front, to!string(t.front));
 		assert(t.back == str.back);
-		assert(t[0] == str.front);
+		assert(t[0] == str[0]);
 		assert(t.length == str.length);
 
 		s = t;
 		assert(!s.empty);
 		assert(s.front == str.front, to!string(t.front));
 		assert(s.back == str.back);
-		assert(s[0] == str.front);
+		assert(s[0] == str[0]);
 		assert(s.length == str.length);
 
 		auto r = String(s);
 		assert(!r.empty);
 		assert(r.front == str.front, to!string(t.front));
 		assert(r.back == str.back);
-		assert(r[0] == str.front);
+		assert(r[0] == str[0]);
 		assert(r.length == str.length);
+
+		auto strC = str;
+		auto strC2 = str;
+		assert(!strC.empty);
+		assert(!strC2.empty);
+
+		r.popFront();
+		str.popFront();
+		assert(str.front == r.front, to!string(r.front));
+
+		r.popBack();
+		str.popBack();
+		assert(str.back == r.back, to!string(r.front));
+		assert(str.front == r.front, to!string(r.front));
+
+		assert(!strC.empty);
+		assert(!s.empty);
+		while(!strC.empty && !s.empty) {
+			assert(strC.front == s.front);
+			assert(strC.back == s.back);
+
+			strC.popFront();
+			s.popFront();
+		}
+
+		assert(strC.empty);
+		assert(s.empty);
+
+		assert(!strC2.empty);
+		assert(!t.empty);
+		while(!strC2.empty && !t.empty) {
+			assert(strC2.front == t.front);
+			assert(strC2.back == t.back);
+
+			strC2.popFront();
+			t.popFront();
+		}
+
+		assert(strC2.empty);
+		assert(t.empty);
 	}
 }
