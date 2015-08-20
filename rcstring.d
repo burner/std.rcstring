@@ -223,6 +223,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	// dup
+
 	@property typeof(this) idup() @trusted nothrow {
 		if(this.isSmall()) {
 			return this;
@@ -235,6 +236,61 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			ret.offset = 0;
 			ret.len = this.len - this.offset;
 
+			return ret;
+		}
+	}
+
+	// concat
+	typeof(this) opBinary(string op,S)(S other) @trusted
+		if((is(S == Unqual!(typeof(this))) ||
+			is(S == immutable(T)[])) && op == "~")
+	{
+		typeof(this) ret;
+
+		const newLen = this.length + other.length;
+
+		if(newLen < SmallSize) {
+			ret.small[0 .. this.length] = this.isSmall() ? 
+				this.small[this.offset .. this.len] :
+				this.largePtr(this.offset, this.len);
+
+			ret.offset = 0;
+			ret.len = this.length;
+
+			static if(is(S == immutable(T)[])) {
+				ret.small[ret.length .. ret.length + other.length] =
+					other;
+			} else {
+				ret.small[ret.length .. ret.length + other.length] =
+					other.isSmall() ? 
+						other.small[other.offset ..  other.len] :
+						other.largePtr(other.offset, other.len);
+			}
+
+			ret.len = ret.len + other.length;
+			return ret;
+		} else {
+			ret.large = ret.handler.make();
+			ret.handler.allocate(ret.large, cast(size_t)(newLen * 1.5));
+
+			ret.large.ptr[0 .. this.length] = this.isSmall() ? 
+				this.small[this.offset .. this.len] :
+				this.largePtr(this.offset, this.len);
+
+			ret.offset = 0;
+			ret.len = this.length;
+
+			static if(is(S == immutable(T)[])) {
+				ret.large.ptr[ret.length .. ret.length + other.length] =
+					other;
+			} else {
+				ret.large.ptr[ret.length .. ret.length + other.length] =
+					other.isSmall() ? 
+						other.small[other.offset ..  other.len] :
+						other.largePtr(other.offset, other.len);
+			}
+
+			ret.len = ret.len + other.length;
 			return ret;
 		}
 	}
@@ -415,6 +471,21 @@ void testFunc(T,size_t Buf)() {
 		
 		if(tdup.large !is null) {
 			assert(tdup.large.refCnt == 1);
+		}
+
+		foreach(it; strs) {
+			auto joinStr = to!(immutable(T)[])(it);
+			auto itStr = TString(joinStr);
+			auto compareStr = str ~ joinStr;
+
+			auto t2dup = tdup ~ joinStr;
+			auto t2dup2 = tdup ~ itStr;
+
+			assert(t2dup.length == compareStr.length);
+			assert(t2dup2.length == compareStr.length);
+
+			assert(t2dup == compareStr);
+			assert(t2dup2 == compareStr);
 		}
 
 		s = t;
