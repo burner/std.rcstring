@@ -422,6 +422,19 @@ void testFunc(T,size_t Buf)() {
 		assert(s.empty == str.empty);
 		assert(s == str);
 
+		foreach(it; strs) {
+			auto cmpS = to!(immutable(T)[])(it);
+			auto itStr = TString(cmpS);
+
+			if(cmpS == str) {
+				assert(s == cmpS);
+				assert(s == itStr);
+			} else {
+				assert(s != cmpS);
+				assert(s != itStr);
+			}
+		}
+
 		if(s.empty) { // if str is empty we do not need to test access
 			continue; //methods
 		}
