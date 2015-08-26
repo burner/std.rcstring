@@ -6,16 +6,21 @@ import std.array : back, front;
 import std.traits : Unqual;
 
 
-pure @safe:
+pure @safe {
 
-struct StringPayload(T) {
+struct StringPayload(T,M = void) {
 	T* ptr;
 	size_t length;
 	long refCnt;
+
+	static if(!is(M == void)) {
+    	ubyte[__traits(classInstanceSize, M)] mutex;
+	}
 }
 
 struct StringPayloadSingleThreadHandler(T) {
 	alias Char = T;
+	alias Payload = StringPayload!T;
 
 	static StringPayload!T* make() @trusted {
 		StringPayload!T* pl;
@@ -64,28 +69,26 @@ struct StringPayloadMultiThreadHandler(T) {
 	import core.sync.mutex : Mutex;
 
 	alias Char = T;
-    ubyte[__traits(classInstanceSize, Mutex)] mutex;
+	alias Payload = StringPayload!(T,Mutex);
 
-	static StringPayload!T* make() @trusted {
-		auto mu = emplace!Mutex(this.mutex);
-		StringPayload!T* pl;
-		synchronized(mutex) {
-			pl = cast(StringPayload!T*)GC.realloc(pl, typeof(*pl).sizeof);
-			pl.ptr = null;
-			pl.length = 0;
-			pl.refCnt = 1;
-		}
+	static Payload* make() @trusted {
+		Payload* pl;
+		pl = cast(Payload*)GC.realloc(pl, typeof(*pl).sizeof);
+		pl.ptr = null;
+		pl.length = 0;
+		pl.refCnt = 1;
+		auto mutex = emplace!Mutex(cast(Mutex*)(pl.mutex.ptr));
 
 		return pl;
 	}
 
-	static void allocate(StringPayload!T* pl, in size_t s) @trusted {
+	static void allocate(Payload* pl, in size_t s) @trusted {
 		import std.range : ElementEncodingType;
 		import std.traits : Unqual;
 
 		assert(s != 0);
-		auto mu = cast(Mutex)this.mutex;
-		synchronized(mutex) {
+		auto mu = cast(Mutex*)pl.mutex;
+		synchronized(*mu) {
 			if(s >= pl.length) {
 				pl.ptr = cast(T*)GC.realloc(pl.ptr, s * T.sizeof);
 				pl.length = s;
@@ -93,27 +96,28 @@ struct StringPayloadMultiThreadHandler(T) {
 		}
 	}
 
-	static void deallocate(StringPayload!T* pl) @trusted {
+	static void deallocate(Payload* pl) @trusted {
 		GC.realloc(pl.ptr, 0);
 		pl.length = 0;
 		GC.realloc(pl, 0);
 	}
 
-	static void incrementRefCnt(StringPayload!T* pl) {
-		auto mu = cast(Mutex)this.mutex;
-		synchronized(mutex) {
+	static void incrementRefCnt(Payload* pl) @trusted {
+		auto mu = cast(Mutex*)pl.mutex;
+		synchronized(*mu) {
 			if(pl !is null) {
 				++(pl.refCnt);
 			}
 		}
 	}
 
-	static void decrementRefCnt(StringPayload!T* pl) {
-		auto mu = cast(Mutex)this.mutex;
-		synchronized(mutex) {
-			if(pl !is null) {
-				--(pl.refCnt);
-			}
+	static void decrementRefCnt(Payload* pl) @trusted {
+		auto mu = cast(Mutex*)pl.mutex.ptr;
+		mu.lock();
+		scope(exit) mu.unlock();
+
+		if(pl !is null) {
+			--(pl.refCnt);
 		}
 
 		if(pl !is null) {
@@ -146,9 +150,15 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		}
 	}
 
-	~this() {
+	/*~this() {
 		if(this.large !is null) {
 			Handler.decrementRefCnt(this.large);
+		}
+	}*/
+
+	~this() @trusted {
+		if(this.large !is null) {
+			Handler.decrementRefCnt(cast(Handler.Payload*)this.large);
 		}
 	}
 
@@ -224,7 +234,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	// dup
 
-	@property typeof(this) idup() @trusted nothrow {
+	@property typeof(this) idup() @trusted {
 		if(this.isSmall()) {
 			return this;
 		} else {
@@ -388,16 +398,22 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	T[SmallSize] small;
-	StringPayload!T* large;
+	Handler.Payload* large;
 	Handler handler;
 
 	ptrdiff_t offset;
 	ptrdiff_t len;
 }
 
+}
+
 alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char, 12);
 alias WString = StringImpl!(wchar, StringPayloadSingleThreadHandler!wchar, 6);
 alias DString = StringImpl!(dchar, StringPayloadSingleThreadHandler!dchar, 3);
+
+alias SString = StringImpl!(char, StringPayloadMultiThreadHandler!char, 12);
+//alias WSString = StringImpl!(wchar, StringPayloadMultiThreadHandler!wchar, 6);
+//alias DSString = StringImpl!(dchar, StringPayloadMultiThreadHandler!dchar, 3);
 
 void testFunc(T,size_t Buf)() {
 	import std.conv : to;
@@ -581,4 +597,9 @@ void testFunc(T,size_t Buf)() {
 		testFunc!(wchar,Buf)();
 		testFunc!(dchar,Buf)();
 	}
+}
+
+@safe pure unittest {
+	String s = "Super Duper ultra long String";
+	const String s2 = s;
 }
