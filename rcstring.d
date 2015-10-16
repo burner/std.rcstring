@@ -65,69 +65,6 @@ struct StringPayloadSingleThreadHandler(T) {
 	}
 }
 
-struct StringPayloadMultiThreadHandler(T) {
-	import core.sync.mutex : Mutex;
-
-	alias Char = T;
-	alias Payload = StringPayload!(T,Mutex);
-
-	static Payload* make() @trusted {
-		Payload* pl;
-		pl = cast(Payload*)GC.realloc(pl, typeof(*pl).sizeof);
-		pl.ptr = null;
-		pl.length = 0;
-		pl.refCnt = 1;
-		auto mutex = emplace!Mutex(cast(Mutex*)(pl.mutex.ptr));
-
-		return pl;
-	}
-
-	static void allocate(Payload* pl, in size_t s) @trusted {
-		import std.range : ElementEncodingType;
-		import std.traits : Unqual;
-
-		assert(s != 0);
-		auto mu = cast(Mutex*)pl.mutex;
-		synchronized(*mu) {
-			if(s >= pl.length) {
-				pl.ptr = cast(T*)GC.realloc(pl.ptr, s * T.sizeof);
-				pl.length = s;
-			}
-		}
-	}
-
-	static void deallocate(Payload* pl) @trusted {
-		GC.realloc(pl.ptr, 0);
-		pl.length = 0;
-		GC.realloc(pl, 0);
-	}
-
-	static void incrementRefCnt(Payload* pl) @trusted {
-		auto mu = cast(Mutex*)pl.mutex;
-		synchronized(*mu) {
-			if(pl !is null) {
-				++(pl.refCnt);
-			}
-		}
-	}
-
-	static void decrementRefCnt(Payload* pl) @trusted {
-		auto mu = cast(Mutex*)pl.mutex.ptr;
-		mu.lock();
-		scope(exit) mu.unlock();
-
-		if(pl !is null) {
-			--(pl.refCnt);
-		}
-
-		if(pl !is null) {
-			if(pl.refCnt == 0) {
-				deallocate(pl);
-			}
-		}
-	}
-}
-
 unittest {
 	auto pl = StringPayloadSingleThreadHandler!char.make();
 	StringPayloadSingleThreadHandler!char.allocate(pl, 6);
@@ -149,12 +86,6 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			Handler.incrementRefCnt(this.large);
 		}
 	}
-
-	/*~this() {
-		if(this.large !is null) {
-			Handler.decrementRefCnt(this.large);
-		}
-	}*/
 
 	~this() @trusted {
 		if(this.large !is null) {
@@ -410,10 +341,6 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char, 12);
 alias WString = StringImpl!(wchar, StringPayloadSingleThreadHandler!wchar, 6);
 alias DString = StringImpl!(dchar, StringPayloadSingleThreadHandler!dchar, 3);
-
-alias SString = StringImpl!(char, StringPayloadMultiThreadHandler!char, 12);
-//alias WSString = StringImpl!(wchar, StringPayloadMultiThreadHandler!wchar, 6);
-//alias DSString = StringImpl!(dchar, StringPayloadMultiThreadHandler!dchar, 3);
 
 void testFunc(T,size_t Buf)() {
 	import std.conv : to;
