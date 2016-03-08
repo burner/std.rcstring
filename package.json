@@ -1,8 +1,9 @@
 {
 	"name": "rcstring",
-	"description": "Reference Countered string replacement",
+	"description": "Reference Countered string",
 	"homepage": "https://github.com/burner/std.rcstring",
-	"copyright": "Copyright © 2015, burner",
+	"copyright": "Copyright © 2016, burner",
+	"importPaths": ["."],
 	"authors": ["Robert burner Schadek"],
 	"license": "BOOST",
 	"sourcePaths": ["."]

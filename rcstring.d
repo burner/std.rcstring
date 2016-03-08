@@ -18,7 +18,7 @@ struct StringPayload(T,M = void) {
 	}
 }
 
-struct StringPayloadSingleThreadHandler(T) {
+struct StringPayloadHandler(T) {
 	alias Char = T;
 	alias Payload = StringPayload!T;
 
@@ -66,10 +66,10 @@ struct StringPayloadSingleThreadHandler(T) {
 }
 
 unittest {
-	auto pl = StringPayloadSingleThreadHandler!char.make();
-	StringPayloadSingleThreadHandler!char.allocate(pl, 6);
-	StringPayloadSingleThreadHandler!char.incrementRefCnt(pl);
-	StringPayloadSingleThreadHandler!char.decrementRefCnt(pl);
+	auto pl = StringPayloadHandler!char.make();
+	StringPayloadHandler!char.allocate(pl, 6);
+	StringPayloadHandler!char.incrementRefCnt(pl);
+	StringPayloadHandler!char.decrementRefCnt(pl);
 }
 
 struct StringImpl(T,Handler,size_t SmallSize = 16) {
@@ -165,7 +165,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	// dup
 
-	@property typeof(this) idup() @trusted {
+	@property typeof(this) dup() @trusted {
 		if(this.isSmall()) {
 			return this;
 		} else {
@@ -283,6 +283,14 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		}
 	}
 
+	immutable(T)[] idup() {
+		if(this.isSmall()) {
+			return this.small[this.offset ..  this.offset + this.len].idup;
+		} else {
+			return this.largePtr(this.offset, this.len).idup;
+		}
+	}
+
 	// assign
 
 	void opAssign(inout(T)[] n) {
@@ -338,9 +346,9 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 }
 
-alias String = StringImpl!(char, StringPayloadSingleThreadHandler!char, 12);
-alias WString = StringImpl!(wchar, StringPayloadSingleThreadHandler!wchar, 6);
-alias DString = StringImpl!(dchar, StringPayloadSingleThreadHandler!dchar, 3);
+alias String = StringImpl!(char, StringPayloadHandler!char, 12);
+alias WString = StringImpl!(wchar, StringPayloadHandler!wchar, 6);
+alias DString = StringImpl!(dchar, StringPayloadHandler!dchar, 3);
 
 void testFunc(T,size_t Buf)() {
 	import std.conv : to;
@@ -355,15 +363,19 @@ void testFunc(T,size_t Buf)() {
 	];
 
 	alias TString = 
-		StringImpl!(T, StringPayloadSingleThreadHandler!T, Buf);
+		StringImpl!(T, StringPayloadHandler!T, Buf);
 
 	foreach(strL; strs) {
 		auto str = to!(immutable(T)[])(strL);
 		//debug writeln(str);
 		auto s = TString(str);
+
 		assert(s.length == str.length);
 		assert(s.empty == str.empty);
 		assert(s == str);
+
+		auto istr = s.idup();
+		assert(str == istr);
 
 		foreach(it; strs) {
 			auto cmpS = to!(immutable(T)[])(it);
@@ -418,12 +430,15 @@ void testFunc(T,size_t Buf)() {
 		assert(t[0] == str[0]);
 		assert(t.length == str.length);
 
-		auto tdup = t.idup;
+		auto tdup = t.dup;
 		assert(!tdup.empty);
 		assert(tdup.front == str.front, to!string(tdup.front));
 		assert(tdup.back == str.back);
 		assert(tdup[0] == str[0]);
 		assert(tdup.length == str.length);
+
+		istr = t.idup();
+		assert(str == istr);
 		
 		if(tdup.large !is null) {
 			assert(tdup.large.refCnt == 1);
