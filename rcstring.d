@@ -273,7 +273,9 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 		if(this.isSmall()) {
 			return typeof(this)(
-				cast(immutable(T)[])this.small[this.offset + low ..  this.offset + high]
+				cast(immutable(T)[])this.small[
+					this.offset + low ..  this.offset + high
+				]
 			);
 		} else {
 			auto ret = typeof(this)(this);
@@ -356,7 +358,7 @@ void testFunc(T,size_t Buf)() {
 	import std.array : empty, popBack, popFront;
 	import std.format : format;
 
-	auto strs = ["ABC", "HellWorld", "", "Foobar", 
+	auto strs = ["","ABC", "HellWorld", "", "Foobar", 
 		"HellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorld", 
 		"ABCD", "Hello", "HellWorldHellWorld", "ölleä",
 		"hello\U00010143\u0100\U00010143", "£$€¥", "öhelloöö"
