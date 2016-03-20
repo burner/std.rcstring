@@ -6,5 +6,5 @@
 	"importPaths": ["."],
 	"authors": ["Robert burner Schadek"],
 	"license": "BOOST",
-	"sourcePaths": ["."]
+	"sourcePaths": ["source"]
 }

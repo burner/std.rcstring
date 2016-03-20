@@ -335,7 +335,33 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			this.largePtr(this.offset, this.len).strideBack();
 
 		this.len -= l;
+	}
 
+	import std.traits : isSomeChar;
+
+	void opIndexAssign(S)(S s, size_t i) @trusted if(isSomeChar!S) {
+		import core.exception : RangeError;
+
+		if(i >= this.length) {
+			throw new RangeError();
+		}
+		static if(is(S == T)) {
+			if(this.isSmall()) {
+					this.small[this.offset + i] = s;		
+			} else {
+				if(this.large.refCnt > 1) {
+					auto oldLarge = this.large;
+					this.large = this.handler.make();
+					this.handler.allocate(this.large, oldLarge.length);
+					this.large.ptr[0 .. this.len - this.offset] =
+						oldLarge.ptr[this.offset .. this.len];
+					this.offset = 0;
+					this.len = this.len - this.offset;
+					this.handler.decrementRefCnt(oldLarge);
+				} 
+				this.large.ptr[this.offset + i] = s;
+			}
+		}
 	}
 
 	T[SmallSize] small;
@@ -546,4 +572,10 @@ void testFunc(T,size_t Buf)() {
 @safe pure unittest {
 	String s = "Super Duper ultra long String";
 	const String s2 = s;
+}
+
+@safe pure unittest {
+	String s = "Super Duper ultra long String";
+	s[0] = 'A';
+	assert(s == "Auper Duper ultra long String", s.idup);
 }
