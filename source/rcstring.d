@@ -143,6 +143,18 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		return cast(size_t)(this.len - this.offset);
 	}
 
+	private long capacitySmall() @safe const nothrow {
+		return this.offset + SmallSize - this.len;
+	}
+
+	private long capacityLarge() @safe const nothrow {
+		if(this.large is null) {
+			return -1;
+		} else {
+			return this.offset + this.large.length - this.len;
+		}
+	}
+
 	// compare
 
 	bool opEquals(S)(S other) const 
@@ -337,6 +349,23 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		this.len -= l;
 	}
 
+	void moveToFront() {
+ 		if(this.offset > 0) {
+			immutable len = this.length;
+			if(this.isSmall()
+				for(int i = 0; i < len; ++i) {
+					this.small[i] = this.small[this.offset + i];
+				}
+			} else {
+				for(int i = 0; i < len; ++i) {
+					this.largePtr.ptr[i] = this.largePtr.ptr[this.offset + i];
+				}
+			}
+			this.offset = 0;
+			this.len = len;
+		}
+	}
+
 	import std.traits : isSomeChar;
 
 	void opIndexAssign(S)(S s, size_t i) @safe if(isSomeChar!S) {
@@ -365,7 +394,24 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 				this.large.ptr[this.offset + i] = s)();
 			}
 		} else {
-			T[4] tmpBuf;
+			T[4 / T.sizeof] tmpBuf;
+			immutable len = encode(tmpBuf, s);
+			if(this.isSmall()) {
+				if(this.capacitySmall() > len) {
+					this.moveToFront();
+				} else {
+					// realloc
+				}
+
+				// insertBack
+				for(int i = 0; i < len; ++i) {
+					this.small[this.len + i] = tmpBuf[i];
+				}
+				this.len += len;
+			} else {
+				// move to front
+				// insertBack
+			}
 		}
 	}
 
