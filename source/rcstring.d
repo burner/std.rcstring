@@ -339,13 +339,13 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	import std.traits : isSomeChar;
 
-	void opIndexAssign(S)(S s, size_t i) @trusted if(isSomeChar!S) {
+	void opIndexAssign(S)(S s, size_t i) @safe if(isSomeChar!S) {
 		import core.exception : RangeError;
 
 		if(i >= this.length) {
 			throw new RangeError();
 		}
-		static if(is(S == T)) {
+		static if(S.sizeof <= T.sizeof) {
 			if(this.isSmall()) {
 					this.small[this.offset + i] = s;		
 			} else {
@@ -353,14 +353,19 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 					auto oldLarge = this.large;
 					this.large = this.handler.make();
 					this.handler.allocate(this.large, oldLarge.length);
+					(() @trusted => 
 					this.large.ptr[0 .. this.len - this.offset] =
-						oldLarge.ptr[this.offset .. this.len];
+						oldLarge.ptr[this.offset .. this.len])
+					();
 					this.offset = 0;
 					this.len = this.len - this.offset;
 					this.handler.decrementRefCnt(oldLarge);
 				} 
-				this.large.ptr[this.offset + i] = s;
+				(() @trusted =>
+				this.large.ptr[this.offset + i] = s)();
 			}
+		} else {
+			T[4] tmpBuf;
 		}
 	}
 
@@ -578,4 +583,7 @@ void testFunc(T,size_t Buf)() {
 	String s = "Super Duper ultra long String";
 	s[0] = 'A';
 	assert(s == "Auper Duper ultra long String", s.idup);
+	dstring dc = "ä";
+	s[1] = dc[0];
+	assert(s == "Aäper Duper ultra long String", s.idup);
 }
