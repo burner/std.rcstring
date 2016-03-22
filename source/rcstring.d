@@ -441,6 +441,8 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 				}
 				import std.stdio : writefln;
 				auto dl = delegate() @trusted {
+					// I need to copy the tmpBuf part by part as they share
+					// the same memory
 					auto rest = this.large.ptr[i .. this.offset + this.len];
 					this.large.ptr[i .. i + len] = tmpBuf[0 .. len];
 					debug writefln("0 %s 1 %s", (i + rest.length + len) - (i + len),
