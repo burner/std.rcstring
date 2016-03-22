@@ -439,10 +439,16 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 					this.handler.allocate(this.large, cast(size_t)(this.large.length * 1.5))
 					)();
 				}
+				import std.stdio : writefln;
 				auto dl = delegate() @trusted {
-					auto rest = this.large.ptr[i .. this.offset+len];
+					auto rest = this.large.ptr[i .. this.offset + this.len];
 					this.large.ptr[i .. i + len] = tmpBuf[0 .. len];
-					this.large.ptr[i + len .. i + len + rest.length] = rest;
+					debug writefln("0 %s 1 %s", (i + rest.length + len) - (i + len),
+							rest.length);
+					//this.large.ptr[i + len .. i + len + rest.length] = rest[];
+					for(int j = 0; j < rest.length; ++j) {
+						this.large.ptr[i + len + j] = rest[i];
+					}
 				};
 				dl();
 			}
