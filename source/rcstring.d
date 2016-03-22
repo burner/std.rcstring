@@ -352,13 +352,15 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	void moveToFront() {
  		if(this.offset > 0) {
 			immutable len = this.length;
-			if(this.isSmall()
+			if(this.isSmall()) {
 				for(int i = 0; i < len; ++i) {
 					this.small[i] = this.small[this.offset + i];
 				}
 			} else {
 				for(int i = 0; i < len; ++i) {
-					this.largePtr.ptr[i] = this.largePtr.ptr[this.offset + i];
+					(() @trusted => 
+					this.large.ptr[i] = this.large.ptr[this.offset + i]
+					)();
 				}
 			}
 			this.offset = 0;
@@ -376,7 +378,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		}
 		static if(S.sizeof <= T.sizeof) {
 			if(this.isSmall()) {
-					this.small[this.offset + i] = s;		
+				this.small[this.offset + i] = s;		
 			} else {
 				if(this.large.refCnt > 1) {
 					auto oldLarge = this.large;
@@ -394,23 +396,55 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 				this.large.ptr[this.offset + i] = s)();
 			}
 		} else {
+			import std.utf : encode;
+
 			T[4 / T.sizeof] tmpBuf;
-			immutable len = encode(tmpBuf, s);
+			immutable len = (() @trusted => encode(tmpBuf, s))();
 			if(this.isSmall()) {
 				if(this.capacitySmall() > len) {
 					this.moveToFront();
+					auto rest = this.small[i .. this.offset+len];
+					this.small[i .. i + len] = tmpBuf[0 .. len];
+					this.small[i + len .. i + len + rest.length] = rest;
 				} else {
 					// realloc
-				}
+					this.large = this.handler.make();
+					this.handler.allocate(this.large, cast(size_t)(this.length * 1.5));
 
-				// insertBack
-				for(int i = 0; i < len; ++i) {
-					this.small[this.len + i] = tmpBuf[i];
+					auto rest = this.small[this.offset + i ..  this.offset+len];
+					auto dl = delegate() @trusted {
+						this.large.ptr[0 .. i] = this.small[this.offset .. i];
+						this.large.ptr[i .. i + len] = tmpBuf[0 .. len];
+						this.large.ptr[i + len .. i + len + rest.length] = rest;
+					};
+					dl();
+
+					this.offset = 0;
+					this.len = i + len + rest.length;
 				}
-				this.len += len;
 			} else {
-				// move to front
-				// insertBack
+				if(this.large.refCnt > 1) {
+					auto oldLarge = this.large;
+					this.large = Handler.make();
+
+					Handler.allocate(this.large, cast(size_t)(oldLarge.length * 1.5));
+					(() @trusted => 
+						this.largePtr(0, oldLarge.length)[] =
+							oldLarge.ptr[0 .. oldLarge.length]
+					)();
+				}
+				this.moveToFront();
+				if(this.capacityLarge() <= len) {
+					(() @trusted => 
+					this.handler.allocate(this.large, cast(size_t)(this.large.length * 1.5))
+					)();
+				}
+				auto dl = delegate() @trusted {
+					auto rest = this.large.ptr[i .. this.offset+len];
+					this.large.ptr[i .. i + len] = tmpBuf[0 .. len];
+					this.large.ptr[i + len .. i + len + rest.length] = rest;
+				};
+				dl();
 			}
 		}
 	}
