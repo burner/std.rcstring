@@ -467,9 +467,9 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 }
 
-alias String = StringImpl!(char, StringPayloadHandler!char, 12);
-alias WString = StringImpl!(wchar, StringPayloadHandler!wchar, 6);
-alias DString = StringImpl!(dchar, StringPayloadHandler!dchar, 3);
+public alias String = StringImpl!(char, StringPayloadHandler!char, 12);
+public alias WString = StringImpl!(wchar, StringPayloadHandler!wchar, 6);
+public alias DString = StringImpl!(dchar, StringPayloadHandler!dchar, 3);
 
 void testFunc(T,size_t Buf)() {
 	import std.conv : to;
