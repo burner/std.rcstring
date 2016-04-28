@@ -3,8 +3,6 @@
 	"description": "Reference Countered string",
 	"homepage": "https://github.com/burner/std.rcstring",
 	"copyright": "Copyright © 2016, burner",
-	"importPaths": ["."],
 	"authors": ["Robert burner Schadek"],
-	"license": "BOOST",
-	"sourcePaths": ["source"]
+	"license": "BOOST"
 }
