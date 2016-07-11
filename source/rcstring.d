@@ -399,13 +399,17 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			import std.utf : encode;
 
 			T[4 / T.sizeof] tmpBuf;
-			immutable len = (() @trusted => encode(tmpBuf, s))();
+			immutable len = (() @trusted => encode(tmpBuf, s))() - 1;
+			immutable to = i + len;
 			if(this.isSmall()) {
 				if(this.capacitySmall() > len) {
 					this.moveToFront();
 					auto rest = this.small[i .. this.offset+len];
-					this.small[i .. i + len] = tmpBuf[0 .. len];
-					this.small[i + len .. i + len + rest.length] = rest;
+					for(int j = cast(int)(this.len + len); j > to; --j) {
+						this.small[j] = this.small[j - len];
+					}
+					this.small[i .. i + len+1] = tmpBuf[0 .. len+1];
+					this.len += len;
 				} else {
 					// realloc
 					this.large = this.handler.make();
@@ -413,14 +417,15 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 					auto rest = this.small[this.offset + i ..  this.offset+len];
 					auto dl = delegate() @trusted {
-						this.large.ptr[0 .. i] = this.small[this.offset .. i];
-						this.large.ptr[i .. i + len] = tmpBuf[0 .. len];
-						this.large.ptr[i + len .. i + len + rest.length] = rest;
+						for(int j = cast(int)(this.len + len); j > to; --j) {
+							this.large.ptr[j] = this.large.ptr[j - len];
+						}
+						this.large.ptr[i .. i + len+1] = tmpBuf[0 .. len+1];
 					};
 					dl();
 
 					this.offset = 0;
-					this.len = i + len + rest.length;
+					this.len += len;
 				}
 			} else {
 				if(this.large.refCnt > 1) {
@@ -443,14 +448,11 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 				auto dl = delegate() @trusted {
 					// I need to copy the tmpBuf part by part as they share
 					// the same memory
-					auto rest = this.large.ptr[i .. this.offset + this.len];
-					this.large.ptr[i .. i + len] = tmpBuf[0 .. len];
-					debug writefln("0 %s 1 %s", (i + rest.length + len) - (i + len),
-							rest.length);
-					//this.large.ptr[i + len .. i + len + rest.length] = rest[];
-					for(int j = 0; j < rest.length; ++j) {
-						this.large.ptr[i + len + j] = rest[i];
+					for(int j = cast(int)(this.len + len); j > to; --j) {
+						this.large.ptr[j] = this.large.ptr[j - len];
 					}
+					this.large.ptr[i .. i + len+1] = tmpBuf[0 .. len+1];
+					this.len += len;
 				};
 				dl();
 			}
@@ -665,6 +667,15 @@ void testFunc(T,size_t Buf)() {
 @safe pure unittest {
 	String s = "Super Duper ultra long String";
 	const String s2 = s;
+}
+
+@safe pure unittest {
+	String s = "Super";
+	s[0] = 'A';
+	assert(s == "Auper", s.idup);
+	dstring dc = "Ä";
+	s[0] = dc[0];
+	assert(s == "Äuper", s.idup);
 }
 
 @safe pure unittest {
