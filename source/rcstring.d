@@ -679,10 +679,13 @@ void testFunc(T,size_t Buf)() {
 }
 
 @safe pure unittest {
+	import std.meta : AliasSeq;
 	String s = "Super Duper ultra long String";
 	s[0] = 'A';
 	assert(s == "Auper Duper ultra long String", s.idup);
-	dstring dc = "ä";
-	s[1] = dc[0];
-	assert(s == "Aäper Duper ultra long String", s.idup);
+	foreach(T; AliasSeq!(string,wstring,dstring)) {
+		T dc = "ä";
+		s[1] = dc[0];
+		assert(s == "Aäper Duper ultra long String", s.idup ~ " || " ~ T.stringof);
+	}
 }
