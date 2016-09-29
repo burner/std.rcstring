@@ -5,6 +5,7 @@ import std.conv : emplace;
 import std.array : back, front;
 import std.traits : Unqual;
 
+import std.stdio;
 
 pure @safe {
 
@@ -110,27 +111,45 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	private void assign(immutable(T)[] input) @trusted {
-		if(input.length < SmallSize) {
-			this.small[0 .. input.length] = input;
-		} else {
-			this.large = Handler.make();
-			Handler.allocate(this.large, input.length);
-			this.large.ptr[0 .. input.length] = input;
+		if(input.length > SmallSize) {
+			this.allocate(input.length);
 		}
 
+		this.storePtr()[0 .. input.length] = input;
 		this.len = input.length;
+	}
+
+	private void allocate(const size_t newLen) @trusted {
+		if(newLen > SmallSize) {
+			if(this.large is null) {
+				this.large = Handler.make();
+			}
+			Handler.allocate(this.large, newLen);
+		}
 	}
 	
 	private T[] largePtr(in size_t low, in size_t high) @trusted {
 		return this.large.ptr[low .. high];
 	}
 
-	private const(T)[] largePtr(in size_t low, in size_t high) const @trusted {
-		return this.large.ptr[low .. high];
-	}
-
 	private bool isSmall() const nothrow {
 		return this.large is null;
+	}
+
+	private T* storePtr() {
+		if(this.isSmall()) {
+			return this.small.ptr;
+		} else {
+			return this.large.ptr;
+		}
+	}
+
+	private const(T)* storePtr() const {
+		if(this.isSmall()) {
+			return this.small.ptr;
+		} else {
+			return this.large.ptr;
+		}
 	}
 
 	// properties
@@ -141,18 +160,6 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	@property size_t length() const nothrow {
 		return cast(size_t)(this.len - this.offset);
-	}
-
-	private long capacitySmall() @safe const nothrow {
-		return this.offset + SmallSize - this.len;
-	}
-
-	private long capacityLarge() @safe const nothrow {
-		if(this.large is null) {
-			return -1;
-		} else {
-			return this.offset + this.large.length - this.len;
-		}
 	}
 
 	// compare
@@ -203,9 +210,8 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		const newLen = this.length + other.length;
 
 		if(newLen < SmallSize) {
-			ret.small[0 .. this.length] = this.isSmall() ? 
-				this.small[this.offset .. this.len] :
-				this.largePtr(this.offset, this.len);
+			ret.small[0 .. this.length] = 
+				this.storePtr()[this.offset .. this.len];
 
 			ret.offset = 0;
 			ret.len = this.length;
@@ -215,9 +221,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 					other;
 			} else {
 				ret.small[ret.length .. ret.length + other.length] =
-					other.isSmall() ? 
-						other.small[other.offset ..  other.len] :
-						other.largePtr(other.offset, other.len);
+					other.storePtr()[other.offset .. other.len];
 			}
 
 			ret.len = ret.len + other.length;
@@ -238,9 +242,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 					other;
 			} else {
 				ret.large.ptr[ret.length .. ret.length + other.length] =
-					other.isSmall() ? 
-						other.small[other.offset ..  other.len] :
-						other.largePtr(other.offset, other.len);
+					other.storePtr()[other.offset .. other.len];
 			}
 
 			ret.len = ret.len + other.length;
@@ -250,29 +252,21 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	// access
 
-	@property auto front() const {
+	@property auto front() const @trusted {
 		assert(!this.empty);
-
-		return this.isSmall() ? 
-			this.small[this.offset .. this.len].front : 
-			this.largePtr(this.offset, this.len).front;
+		return this.storePtr()[this.offset .. this.len].front;
 	}
 
-	@property auto back() const {
+	@property auto back() const @trusted {
 		assert(!this.empty);
-
-		return this.isSmall() ? 
-			this.small[this.offset .. this.len].back : 
-			this.largePtr(this.offset, this.len).back;
+		return this.storePtr()[this.offset .. this.len].back;
 	}
 
-	@property T opIndex(const size_t idx) const {
+	@property T opIndex(const size_t idx) const @trusted {
 		assert(!this.empty);
 		assert(idx < this.len - this.offset);
 
-		return this.isSmall() ? 
-			this.small[this.offset .. this.len][idx] : 
-			this.largePtr(this.offset, this.len)[idx];
+		return this.storePtr()[this.offset .. this.len][idx];
 	}
 
 	typeof(this) opSlice() {
@@ -297,12 +291,8 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		}
 	}
 
-	immutable(T)[] idup() {
-		if(this.isSmall()) {
-			return this.small[this.offset ..  this.offset + this.len].idup;
-		} else {
-			return this.largePtr(this.offset, this.len).idup;
-		}
+	immutable(T)[] idup() @trusted const {
+		return this.storePtr()[this.offset .. this.offset + this.len].idup;
 	}
 
 	// assign
@@ -370,92 +360,40 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	import std.traits : isSomeChar;
 
-	void opIndexAssign(S)(S s, size_t i) @safe if(isSomeChar!S) {
-		import core.exception : RangeError;
+	void opIndexAssign(S)(S s, const size_t i) @trusted if(isSomeChar!S) {
+		import std.utf : decode, encode;
+		import std.conv : to;
+		this.moveToFront();
 
-		if(i >= this.length) {
-			throw new RangeError();
-		}
-		static if(S.sizeof <= T.sizeof) {
-			if(this.isSmall()) {
-				this.small[this.offset + i] = s;		
-			} else {
-				if(this.large.refCnt > 1) {
-					auto oldLarge = this.large;
-					this.large = this.handler.make();
-					this.handler.allocate(this.large, oldLarge.length);
-					(() @trusted => 
-					this.large.ptr[0 .. this.len - this.offset] =
-						oldLarge.ptr[this.offset .. this.len])
-					();
-					this.offset = 0;
-					this.len = this.len - this.offset;
-					this.handler.decrementRefCnt(oldLarge);
-				} 
-				(() @trusted =>
-				this.large.ptr[this.offset + i] = s)();
+		size_t iCopy = i;
+		T[4 / T.sizeof] correctEncoding;
+		const size_t toReplaceLen = encode(correctEncoding, 
+				decode(this.storePtr()[0 .. this.len], iCopy)
+		);
+
+		const size_t replacementLen = encode(correctEncoding, s);
+
+		T* ptr;
+		if(replacementLen > toReplaceLen) {
+			this.allocate(this.len + (replacementLen - toReplaceLen));
+			ptr = this.storePtr();
+			for(int j = to!int(this.length + (replacementLen - toReplaceLen)); j != i;
+					--j)
+			{
+				ptr[j] = ptr[j-1];
+			}
+		} else if(replacementLen < toReplaceLen) {
+			ptr = this.storePtr();
+			for(int j = to!int(i + replacementLen); j < this.length - 1; ++j) {
+				ptr[j] = ptr[j + 1];
 			}
 		} else {
-			import std.utf : encode;
+			ptr = this.storePtr();
+		}
+		this.len += (replacementLen - toReplaceLen);
 
-			T[4 / T.sizeof] tmpBuf;
-			immutable len = (() @trusted => encode(tmpBuf, s))() - 1;
-			immutable to = i + len;
-			if(this.isSmall()) {
-				if(this.capacitySmall() > len) {
-					this.moveToFront();
-					auto rest = this.small[i .. this.offset+len];
-					for(int j = cast(int)(this.len + len); j > to; --j) {
-						this.small[j] = this.small[j - len];
-					}
-					this.small[i .. i + len+1] = tmpBuf[0 .. len+1];
-					this.len += len;
-				} else {
-					// realloc
-					this.large = this.handler.make();
-					this.handler.allocate(this.large, cast(size_t)(this.length * 1.5));
-
-					auto rest = this.small[this.offset + i ..  this.offset+len];
-					auto dl = delegate() @trusted {
-						for(int j = cast(int)(this.len + len); j > to; --j) {
-							this.large.ptr[j] = this.large.ptr[j - len];
-						}
-						this.large.ptr[i .. i + len+1] = tmpBuf[0 .. len+1];
-					};
-					dl();
-
-					this.offset = 0;
-					this.len += len;
-				}
-			} else {
-				if(this.large.refCnt > 1) {
-					auto oldLarge = this.large;
-					this.large = Handler.make();
-
-					Handler.allocate(this.large, cast(size_t)(oldLarge.length * 1.5));
-					(() @trusted => 
-						this.largePtr(0, oldLarge.length)[] =
-							oldLarge.ptr[0 .. oldLarge.length]
-					)();
-				}
-				this.moveToFront();
-				if(this.capacityLarge() <= len) {
-					(() @trusted => 
-					this.handler.allocate(this.large, cast(size_t)(this.large.length * 1.5))
-					)();
-				}
-				import std.stdio : writefln;
-				auto dl = delegate() @trusted {
-					// I need to copy the tmpBuf part by part as they share
-					// the same memory
-					for(int j = cast(int)(this.len + len); j > to; --j) {
-						this.large.ptr[j] = this.large.ptr[j - len];
-					}
-					this.large.ptr[i .. i + len+1] = tmpBuf[0 .. len+1];
-					this.len += len;
-				};
-				dl();
-			}
+		for(int j = 0; j < replacementLen; ++j) {
+			ptr[i + j] = correctEncoding[j];
 		}
 	}
 
@@ -490,7 +428,6 @@ void testFunc(T,size_t Buf)() {
 
 	foreach(strL; strs) {
 		auto str = to!(immutable(T)[])(strL);
-		//debug writeln(str);
 		auto s = TString(str);
 
 		assert(s.length == str.length);
@@ -647,6 +584,11 @@ void testFunc(T,size_t Buf)() {
 
 			strC2.popFront();
 			t.popFront();
+			t.moveToFront();
+
+			auto idup2 = t.idup;
+			assert(t == idup2);
+			assert(t == strC2);
 		}
 
 		assert(strC2.empty);
@@ -654,7 +596,11 @@ void testFunc(T,size_t Buf)() {
 	}
 }
 
-@safe pure unittest {
+unittest {
+	testFunc!(char,3)();
+}
+
+@safe unittest {
 	import std.traits : TypeTuple;
 
 	foreach(Buf; TypeTuple!(1,2,3,4,8,9,12,16,20,21)) {
@@ -669,7 +615,7 @@ void testFunc(T,size_t Buf)() {
 	const String s2 = s;
 }
 
-@safe pure unittest {
+@safe unittest {
 	String s = "Super";
 	s[0] = 'A';
 	assert(s == "Auper", s.idup);
@@ -678,14 +624,20 @@ void testFunc(T,size_t Buf)() {
 	assert(s == "Äuper", s.idup);
 }
 
-@safe pure unittest {
+@safe unittest {
 	import std.meta : AliasSeq;
-	String s = "Super Duper ultra long String";
-	s[0] = 'A';
-	assert(s == "Auper Duper ultra long String", s.idup);
 	foreach(T; AliasSeq!(string,wstring,dstring)) {
-		T dc = "ä";
-		s[1] = dc[0];
+		String s = "Super Duper ultra long String";
+		s[0] = 'A';
+		assert(s == "Auper Duper ultra long String", s.idup);
+
+		dchar dc = 'ä';
+		s[1] = dc;
 		assert(s == "Aäper Duper ultra long String", s.idup ~ " || " ~ T.stringof);
+		s.popFront();
+
+		dc = 'u';
+		s[0] = dc;
+		assert(s == "uper Duper ultra long String", s.idup ~ " || " ~ T.stringof);
 	}
 }
