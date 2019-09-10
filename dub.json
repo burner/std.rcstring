@@ -4,5 +4,14 @@
 	"homepage": "https://github.com/burner/std.rcstring",
 	"copyright": "Copyright © 2016, burner",
 	"authors": ["Robert burner Schadek"],
-	"license": "BOOST"
+	"license": "BOOST",
+	"configurations" : [
+		{
+			"name" : "unittest"
+		},
+		{
+			"name" : "default",
+			"dflags": ["-betterC"]
+		}
+	]
 }

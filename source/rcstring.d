@@ -1,13 +1,10 @@
 module rcstring;
 
-import core.memory;
-import std.conv : emplace;
-import std.array : back, front;
-import std.traits : Unqual;
-
-import std.stdio;
-
-pure @safe {
+import core.stdc.stdlib : realloc, malloc, free;
+//import core.memory;
+//import std.conv : emplace;
+//import std.array : back, front;
+//import std.traits : Unqual;
 
 struct StringPayload(T,M = void) {
 	T* ptr;
@@ -25,7 +22,7 @@ struct StringPayloadHandler(T) {
 
 	static StringPayload!T* make() @trusted {
 		StringPayload!T* pl;
-		pl = cast(StringPayload!T*)GC.realloc(pl, typeof(*pl).sizeof);
+		pl = cast(StringPayload!T*)realloc(pl, typeof(*pl).sizeof);
 		pl.ptr = null;
 		pl.length = 0;
 		pl.refCnt = 1;
@@ -34,20 +31,17 @@ struct StringPayloadHandler(T) {
 	}
 
 	static void allocate(StringPayload!T* pl, in size_t s) @trusted {
-		import std.range : ElementEncodingType;
-		import std.traits : Unqual;
-
-		assert(s != 0);
+		//assert(s != 0);
 		if(s >= pl.length) {
-			pl.ptr = cast(T*)GC.realloc(pl.ptr, s * T.sizeof);
+			pl.ptr = cast(T*)realloc(pl.ptr, s * T.sizeof);
 			pl.length = s;
 		}
 	}
 
 	static void deallocate(StringPayload!T* pl) @trusted {
-		GC.realloc(pl.ptr, 0);
+		realloc(pl.ptr, 0);
 		pl.length = 0;
-		GC.realloc(pl, 0);
+		realloc(pl, 0);
 	}
 
 	static void incrementRefCnt(StringPayload!T* pl) {
@@ -60,7 +54,7 @@ struct StringPayloadHandler(T) {
 		if(pl !is null) {
 			--(pl.refCnt);
 			if(pl.refCnt == 0) {
-				deallocate(pl);
+				free(pl);
 			}
 		}
 	}
@@ -94,7 +88,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		}
 	}
 
-	private void assign(typeof(this) n) @safe {
+	private void assign(typeof(this) n) @trusted {
 		if(this.large !is null) {
 			Handler.decrementRefCnt(this.large);
 		}
@@ -163,6 +157,8 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	// compare
+	
+	import std.traits : Unqual;
 
 	bool opEquals(S)(S other) const 
 		if(is(S == Unqual!(typeof(this))) ||
@@ -252,19 +248,19 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	// access
 
-	@property auto front() const @trusted {
-		assert(!this.empty);
-		return this.storePtr()[this.offset .. this.len].front;
+	@property T front() const @trusted {
+		//assert(!this.empty);
+		return this.storePtr()[this.offset .. this.len][0];
 	}
 
-	@property auto back() const @trusted {
-		assert(!this.empty);
-		return this.storePtr()[this.offset .. this.len].back;
+	@property T back() const @trusted {
+		//assert(!this.empty);
+		return this.storePtr()[this.offset .. this.len][$ - 1];
 	}
 
 	@property T opIndex(const size_t idx) const @trusted {
-		assert(!this.empty);
-		assert(idx < this.len - this.offset);
+		//assert(!this.empty);
+		//assert(idx < this.len - this.offset);
 
 		return this.storePtr()[this.offset .. this.len][idx];
 	}
@@ -274,8 +270,8 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	typeof(this) opSlice(in size_t low, in size_t high) @trusted {
-		assert(low <= high);
-		assert(high < this.length);
+		//assert(low <= high);
+		//assert(high < this.length);
 
 		if(this.isSmall()) {
 			return typeof(this)(
@@ -291,9 +287,9 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		}
 	}
 
-	immutable(T)[] idup() @trusted const {
+	/*immutable(T)[] idup() @trusted const {
 		return this.storePtr()[this.offset .. this.offset + this.len].idup;
-	}
+	}*/
 
 	// assign
 
@@ -319,7 +315,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	// modify
 
-	void popFront() {
+	/*void popFront() {
 		import std.utf : stride;
 
 		const auto l = this.isSmall() ? 
@@ -327,9 +323,9 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			this.largePtr(this.offset, this.len).stride();
 
 		this.offset += l;
-	}
+	}*/
 
-	void popBack() {
+	/*void popBack() {
 		import std.utf : strideBack;
 
 		const auto l = this.isSmall() ? 
@@ -337,7 +333,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 			this.largePtr(this.offset, this.len).strideBack();
 
 		this.len -= l;
-	}
+	}*/
 
 	void moveToFront() {
  		if(this.offset > 0) {
@@ -360,7 +356,13 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 
 	import std.traits : isSomeChar;
 
-	void opIndexAssign(S)(S s, const size_t i) @trusted if(isSomeChar!S) {
+	void opIndexAssign(T s, const size_t i) {
+		this.moveToFront();
+		this.allocate(this.len + 1);
+		this.storePtr()[i] = s;
+	}
+
+	/*void opIndexAssign(S)(S s, const size_t i) @trusted if(isSomeChar!S) {
 		import std.utf : decode, encode;
 		import std.conv : to;
 		this.moveToFront();
@@ -395,7 +397,7 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 		for(int j = 0; j < replacementLen; ++j) {
 			ptr[i + j] = correctEncoding[j];
 		}
-	}
+	}*/
 
 	T[SmallSize] small;
 	Handler.Payload* large;
@@ -405,18 +407,11 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	ptrdiff_t len;
 }
 
-}
-
 public alias String = StringImpl!(char, StringPayloadHandler!char, 12);
 public alias WString = StringImpl!(wchar, StringPayloadHandler!wchar, 6);
 public alias DString = StringImpl!(dchar, StringPayloadHandler!dchar, 3);
 
 void testFunc(T,size_t Buf)() {
-	import std.conv : to;
-	import std.stdio : writeln;
-	import std.array : empty, popBack, popFront;
-	import std.format : format;
-
 	auto strs = ["","ABC", "HellWorld", "", "Foobar", 
 		"HellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorldHellWorld", 
 		"ABCD", "Hello", "HellWorldHellWorld", "ölleä",
@@ -438,7 +433,7 @@ void testFunc(T,size_t Buf)() {
 		assert(str == istr);
 
 		foreach(it; strs) {
-			auto cmpS = to!(immutable(T)[])(it);
+			auto cmpS = cast(immutable(T)[])(it);
 			auto itStr = TString(cmpS);
 
 			if(cmpS == str) {
@@ -454,9 +449,9 @@ void testFunc(T,size_t Buf)() {
 			continue; //methods
 		}
 
-		assert(s.front == str.front, to!string(s.front));
+		assert(s.front == str.front);
 		assert(s.back == str.back);
-		assert(s[0] == str[0], to!string(s[0]) ~ " " ~ to!string(str.front));
+		assert(s[0] == str[0]);
 		for(size_t i = 0; i < str.length; ++i) {
 			assert(str[i] == s[i]);
 		}
@@ -470,11 +465,7 @@ void testFunc(T,size_t Buf)() {
 				assert(ss.empty == strc.empty);
 
 				for(size_t k = 0; k < ss.length; ++k) {
-					assert(ss[k] == strc[k], 
-						format("it %s jt %s k %s ss[k] %s strc[k] %s str %s",
-							it, jt, k, ss[k], strc[k], str
-						)
-					);
+					assert(ss[k] == strc[k]);
 				}
 			}
 		}
@@ -485,14 +476,14 @@ void testFunc(T,size_t Buf)() {
 		t = str;
 		assert(s == t);
 		assert(!t.empty);
-		assert(t.front == str.front, to!string(t.front));
+		assert(t.front == str.front);
 		assert(t.back == str.back);
 		assert(t[0] == str[0]);
 		assert(t.length == str.length);
 
 		auto tdup = t.dup;
 		assert(!tdup.empty);
-		assert(tdup.front == str.front, to!string(tdup.front));
+		assert(tdup.front == str.front);
 		assert(tdup.back == str.back);
 		assert(tdup[0] == str[0]);
 		assert(tdup.length == str.length);
@@ -505,7 +496,7 @@ void testFunc(T,size_t Buf)() {
 		}
 
 		foreach(it; strs) {
-			auto joinStr = to!(immutable(T)[])(it);
+			auto joinStr = cast(immutable(T)[])(it);
 			auto itStr = TString(joinStr);
 			auto compareStr = str ~ joinStr;
 
@@ -521,21 +512,21 @@ void testFunc(T,size_t Buf)() {
 
 		s = t;
 		assert(!s.empty);
-		assert(s.front == str.front, to!string(t.front));
+		assert(s.front == str.front);
 		assert(s.back == str.back);
 		assert(s[0] == str[0]);
 		assert(s.length == str.length);
 
 		auto r = TString(s);
 		assert(!r.empty);
-		assert(r.front == str.front, to!string(t.front));
+		assert(r.front == str.front);
 		assert(r.back == str.back);
 		assert(r[0] == str[0]);
 		assert(r.length == str.length);
 
 		auto g = r[];
 		assert(!g.empty);
-		assert(g.front == str.front, to!string(t.front));
+		assert(g.front == str.front);
 		assert(g.back == str.back);
 		assert(g[0] == str[0]);
 		assert(g.length == str.length);
@@ -547,13 +538,13 @@ void testFunc(T,size_t Buf)() {
 
 		r.popFront();
 		str.popFront();
-		assert(str.front == r.front, to!string(r.front));
+		assert(str.front == r.front);
 		assert(s != r);
 
 		r.popBack();
 		str.popBack();
-		assert(str.back == r.back, to!string(r.front));
-		assert(str.front == r.front, to!string(r.front));
+		assert(str.back == r.back);
+		assert(str.front == r.front);
 
 		assert(!strC.empty);
 		assert(!s.empty);
@@ -601,43 +592,44 @@ unittest {
 }
 
 @safe unittest {
-	import std.traits : TypeTuple;
+	import std.meta : AliasSeq;
 
-	foreach(Buf; TypeTuple!(1,2,3,4,8,9,12,16,20,21)) {
+	foreach(Buf; AliasSeq!(1,2,3,4,8,9,12,16,20,21)) {
 		testFunc!(char,Buf)();
 		testFunc!(wchar,Buf)();
 		testFunc!(dchar,Buf)();
 	}
 }
 
-@safe pure unittest {
+@system unittest {
 	String s = "Super Duper ultra long String";
 	const String s2 = s;
 }
 
-@safe unittest {
+@system unittest {
 	String s = "Super";
 	s[0] = 'A';
-	assert(s == "Auper", s.idup);
-	dstring dc = "Ä";
-	s[0] = dc[0];
-	assert(s == "Äuper", s.idup);
+	assert(s == "Auper");
+	//string dc = "Ä";
+	//s[0] = dc[0];
+	//assert(s == "Äuper");
 }
 
-@safe unittest {
+/+
+@system unittest {
 	import std.meta : AliasSeq;
 	foreach(T; AliasSeq!(string,wstring,dstring)) {
 		String s = "Super Duper ultra long String";
 		s[0] = 'A';
-		assert(s == "Auper Duper ultra long String", s.idup);
+		assert(s == "Auper Duper ultra long String");
 
 		dchar dc = 'ä';
 		s[1] = dc;
-		assert(s == "Aäper Duper ultra long String", s.idup ~ " || " ~ T.stringof);
+		assert(s == "Aäper Duper ultra long String");
 		s.popFront();
 
 		dc = 'u';
 		s[0] = dc;
-		assert(s == "uper Duper ultra long String", s.idup ~ " || " ~ T.stringof);
+		assert(s == "uper Duper ultra long String");
 	}
-}
+}+/
