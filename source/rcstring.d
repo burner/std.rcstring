@@ -54,7 +54,7 @@ struct StringPayloadHandler(T) {
 		if(pl !is null) {
 			--(pl.refCnt);
 			if(pl.refCnt == 0) {
-				free(pl);
+				deallocate(pl);
 			}
 		}
 	}
@@ -355,12 +355,6 @@ struct StringImpl(T,Handler,size_t SmallSize = 16) {
 	}
 
 	import std.traits : isSomeChar;
-
-	void opIndexAssign(T s, const size_t i) {
-		this.moveToFront();
-		this.allocate(this.len + 1);
-		this.storePtr()[i] = s;
-	}
 
 	/*void opIndexAssign(S)(S s, const size_t i) @trusted if(isSomeChar!S) {
 		import std.utf : decode, encode;
